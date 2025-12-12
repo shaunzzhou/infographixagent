@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, PieChart, Upload } from 'lucide-react';
 import { AppState, AnalysisResult, DocumentInputData, AVAILABLE_TEMPLATES } from './types';
-import { analyzeDocument, generateInfographicImage } from './services/gemini';
+import { analyzeDocument, generateInfographicImage, generateInfographicPlan } from './services/gemini';
 import { DocumentInput } from './components/DocumentInput';
 import { AnalysisView } from './components/AnalysisView';
 import { InfographicResult } from './components/InfographicResult';
@@ -73,8 +73,16 @@ const App: React.FC = () => {
           aspectRatio: aspectRatio, // '3:4' default
           imageSize: '1K'
       };
+     
+      let planText: string | null = null;
+      try {
+          planText = await generateInfographicPlan(analysisData, finalTemplateConfig, visualConfig, language);
+          console.log("[App] Infographic Plan:\n", planText);
+      } catch (planErr) {
+          console.warn("[App] Plan generation failed. Continuing without plan.", planErr);
+      }
       
-      const images = await generateInfographicImage(analysisData, finalTemplateConfig, visualConfig, language);
+      const images = await generateInfographicImage(analysisData, finalTemplateConfig, visualConfig, language, planText || undefined);
       
       setImageUrls(images);
       setAppState(AppState.COMPLETE);

@@ -24,7 +24,7 @@ const BRAND_ASSETS: Record<string, {
     'aa': { 
         name: 'Antalpha',
         logoPath: '/template/aa_logo.png',
-        templatePath: '/template/aa_ppt.pdf',
+        templatePath: '/template/aa_bg.png',
         brandDNA: "Modern finance. Deep blue to indigo gradients, abstract financial data waves, gold/orange accent highlights for key metrics. Sophisticated, dynamic, reliable."
     }
 };
@@ -324,13 +324,116 @@ export const analyzeDocument = async (input: DocumentInputData, language: Langua
 };
 
 /**
+ * Generate a full infographic plan in text format using Gemini.
+ */
+export const generateInfographicPlan = async (
+    data: AnalysisResult,
+    templateConfig: { fileName?: string },
+    visualConfig: { aspectRatio: string },
+    language: Language = 'en'
+): Promise<string> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const modelId = "gemini-2.5-flash";
+
+    let assetKey = Object.keys(BRAND_ASSETS).find(key => BRAND_ASSETS[key].templatePath.includes(templateConfig.fileName || '')) || 'ns_black';
+    const assets = BRAND_ASSETS[assetKey];
+    console.log(`[Planner] Using assets for: ${assets.name}`);
+
+    const [logo, templateRef] = await Promise.all([
+        fetchAssetAsBase64(assets.logoPath),
+        fetchAssetAsBase64(assets.templatePath)
+    ]);
+
+    const ratio = visualConfig.aspectRatio || '3:4';
+    const [widthRatio, heightRatio] = ratio.split(':').map(n => parseFloat(n)) as [number, number];
+    const orientation = widthRatio >= heightRatio ? 'Landscape' : 'Portrait';
+
+    const parts: any[] = [];
+    let prompt = `
+ROLE: Senior Infographic Layout Director.
+OUTPUT LANGUAGE: ${language === 'zh' ? 'Simplified Chinese (zh-CN)' : 'English'} ONLY.
+TASK: Produce a complete infographic plan AFTER the user has approved their copy and brand selection.
+
+BRAND DNA:
+"${assets.brandDNA}"
+
+CANVAS SETTINGS:
+- Aspect Ratio: ${ratio}
+- Orientation: ${orientation}
+- Template Reference: ${templateRef ? `[File Input REF_${assets.name}]` : 'Not Available'}
+
+CONTENT PROVIDED BY USER:
+- Title: "${data.title}"
+- Summary: "${data.summary}"
+- Sections: ${
+        data.keyPoints.length > 0
+            ? data.keyPoints.map((kp, idx) => `Section ${idx + 1}: ${kp.title} -> ${kp.description}`).join('\n  ')
+            : 'Poster mode (no sections beyond headline/subtitle)'
+    }
+- Custom Visual Motif: ${data.customVisualPrompt?.trim() || 'None'}
+
+PLAN FORMAT (TEXT ONLY, ABSOLUTELY NO JSON):
+1. CANVAS OVERVIEW — describe grid units, safe margins (use percent values, e.g., "Top margin 8%").
+2. BRAND & BACKGROUND — explain how to reuse [File Input ...] template layers and apply brand colors/texture.
+3. LOGO & HEADER — exact placement (coordinates 0-100 for X/Y anchors), size guidance, hierarchy of text.
+4. BODY SECTIONS — for each section/key point, specify:
+   - placement rectangle using normalized percentages (Left %, Top %, Width %, Height %),
+   - whether it is text, chart placeholder, or visual,
+   - how to incorporate the user-provided text verbatim.
+5. VISUAL SCENE — instructions for illustrations/photo treatments referencing ${data.customVisualPrompt ? 'the custom motif AND' : ''} the brand DNA.
+6. FOOTER & BACKGROUND DETAILS — call out any footer text, icons, or supporting metrics.
+7. EXECUTION NOTES — bullet list of do/don’t (e.g., "Do not add new copy", "Respect safe zones").
+
+IMPORTANT:
+- Refer to attachments exactly as [File Input N] when describing template/logo usage.
+- Use normalized percentages (0-100) for any placement values (example: "Main title block spans X:10-90, Y:12-25").
+- Never invent extra marketing copy; always reuse provided text.
+- Return polished prose, not bullet gibberish.
+`;
+
+    let assetIndex = 1;
+    if (templateRef) {
+        parts.push({ inlineData: { mimeType: templateRef.mimeType, data: templateRef.data } });
+        prompt = prompt.replace(`[File Input REF_${assets.name}]`, `[File Input ${assetIndex}]`);
+        assetIndex++;
+    }
+    if (logo) {
+        parts.push({ inlineData: { mimeType: logo.mimeType, data: logo.data } });
+        prompt += `\nNOTE: [File Input ${assetIndex}] is the logo. Specify its placement clearly.`;
+        assetIndex++;
+    } else {
+        prompt += `\nNOTE: Logo asset unavailable. Instruct designer to use text logo "${assets.name}".`;
+    }
+
+    parts.push({ text: prompt });
+
+    const response = await ai.models.generateContent({
+        model: modelId,
+        contents: [{ role: 'user', parts }],
+        config: {
+            temperature: 0.35,
+            maxOutputTokens: 4000,
+            responseMimeType: "text/plain"
+        }
+    });
+
+    const planText = response.text?.trim();
+    if (!planText) {
+        throw new Error("Plan generation returned empty text.");
+    }
+    console.log("[Planner] Generated Infographic Plan:\n", planText);
+    return planText;
+};
+
+/**
  * GENERATE IMAGE: Gemini 3 Pro
  */
 export const generateInfographicImage = async (
     data: AnalysisResult, 
     templateConfig: { fileName?: string },
     visualConfig: { aspectRatio: string },
-    language: Language = 'en'
+    language: Language = 'en',
+    planText?: string
 ): Promise<string[]> => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const model = "gemini-3-pro-image-preview"; // Use Pro for highest visual quality
@@ -377,11 +480,13 @@ export const generateInfographicImage = async (
         assetIndex++;
     }
 
+    const templateReferenceLabel = templateIndex > 0 ? `[File Input ${templateIndex}]` : "the brand guidelines described above";
+
     // Add Logo
     if (logo) {
          parts.push({ inlineData: { mimeType: logo.mimeType, data: logo.data } });
          logoIndex = assetIndex;
-         prompt += `\n[File Input ${assetIndex}]: **CORPORATE LOGO**. This must be pasted in the top corner.\n`;
+         prompt += `\n[File Input ${assetIndex}]: **LOGO**. This must be pasted in the top corner.\n`;
          assetIndex++;
     }
 
@@ -395,7 +500,7 @@ export const generateInfographicImage = async (
         DESIGN SYNTHESIS INSTRUCTIONS:
         
         1. **BACKGROUND & STRUCTURE (Brand Dominance)**:
-           - You MUST maintain the core background texture, geometry, and layout style of [File Input ${templateIndex}].
+           - You MUST maintain the core background texture, geometry, and layout style of ${templateIndex > 0 ? `[File Input ${templateIndex}]` : "the official brand system"}.
            - Do NOT simply delete the corporate background to replace it with a generic photo.
            
         2. **THEME INTEGRATION (Harmonious Blend)**:
@@ -410,7 +515,7 @@ export const generateInfographicImage = async (
         --------------------------------------------------\n
         `;
     } else {
-        prompt += `\nNOTE: No specific visual instruction provided. Adhere strictly to the colors and style of [File Input ${templateIndex}].\n`;
+        prompt += `\nNOTE: No specific visual instruction provided. Adhere strictly to the colors and style of ${templateReferenceLabel}.\n`;
     }
 
     prompt += `
@@ -431,11 +536,29 @@ export const generateInfographicImage = async (
            ${data.keyPoints.length > 0 ? "- content sections:" : ""}
            ${data.keyPoints.map((kp, i) => `- ${kp.title}: ${kp.description}`).join('\n')}
 
-        3. **Negative Constraints**:
-           - NO timestamps or dates (unless part of the title).
-           - NO page numbers or footers.
-           - NO "Generated by AI" text.
+        3. **Layout Compliance**:
+           ${planText
+                ? `- Follow the approved plan exactly as described below. Do not rearrange or improvise new sections.`
+                : `- Use the provided template wireframe for structure. Maintain generous margins and align sections symmetrically.`
+           }
+
+        4. **Content Integrity**:
+           - Use only the provided text.
+           - No extra slogans, timestamps, or AI disclaimers.
     `;
+
+    if (planText) {
+        prompt += `
+        --------------------------------------------------
+        APPROVED LAYOUT PLAN (FOLLOW EXACTLY):
+        ${planText}
+        --------------------------------------------------
+        `;
+    } else {
+        prompt += `
+        NOTE: No explicit layout plan provided. Adhere closely to ${templateReferenceLabel} for spacing and hierarchy.
+        `;
+    }
 
     parts.push({ text: prompt });
 

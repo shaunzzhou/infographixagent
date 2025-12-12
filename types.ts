@@ -66,7 +66,7 @@ export const AVAILABLE_TEMPLATES = [
   { 
       id: 'aa', 
       name: 'AA', 
-      filename: 'aa_ppt.pdf', 
+      filename: 'aa_bg.png', 
       description: "", 
       style: "bg-gradient-to-br from-blue-900 to-indigo-900 text-white"
   }
