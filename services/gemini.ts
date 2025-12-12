@@ -324,7 +324,7 @@ export const analyzeDocument = async (input: DocumentInputData, language: Langua
 };
 
 /**
- * GENERATE IMAGE: Gemini 3 Pro - Generates 5 Instances
+ * GENERATE IMAGE: Gemini 3 Pro
  */
 export const generateInfographicImage = async (
     data: AnalysisResult, 
@@ -439,10 +439,10 @@ export const generateInfographicImage = async (
 
     parts.push({ text: prompt });
 
-    console.log("[Artist] Generating 5 parallel instances...");
+    console.log("[Artist] Generating 3 parallel instances...");
 
-    // 4. Parallel Generation for 5 Instances
-    const numberOfInstances = 5;
+    // 4. Parallel Generation
+    const numberOfInstances = 3;
     
     // Helper function for a single generation request
     const generateInstance = async (index: number): Promise<string | null> => {
