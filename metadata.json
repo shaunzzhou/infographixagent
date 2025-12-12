@@ -1,0 +1,5 @@
+{
+  "name": "InfoGraphix Agent",
+  "description": "An intelligent agent that reads company documents, extracts key insights, and generates visual infographics for easy employee consumption.",
+  "requestFramePermissions": []
+}
