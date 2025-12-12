@@ -11,14 +11,14 @@ const BRAND_ASSETS: Record<string, {
 }> = {
     'ns_black': {
         name: 'Northstar', 
-        logoPath: '/template/ns_logo.png',
-        templatePath: '/template/ns_black_ppt.pdf',
+        logoPath: '/template/ns_black_logo.png',
+        templatePath: '/template/ns_black_bg.png',
         brandDNA: "High-tech, dark mode aesthetic. Deep slate/navy gradients, glowing cyber-blue accents, geometric hexagons/triangles, clean white sans-serif typography. Professional, futuristic, premium."
     },
     'ns_white': {
         name: 'Northstar', 
-        logoPath: '/template/ns_logo.png',
-        templatePath: '/template/ns_white_ppt.pdf',
+        logoPath: '/template/ns_white_logo.png',
+        templatePath: '/template/ns_black_bg.png',
         brandDNA: "Clean corporate minimalism. White backgrounds, subtle light-gray shadows, sharp navy blue text, generous whitespace. Professional, trustworthy, clinical."
     },
     'aa': { 

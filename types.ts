@@ -52,14 +52,14 @@ export const AVAILABLE_TEMPLATES = [
   { 
       id: 'ns_black', 
       name: 'NS Black', 
-      filename: 'ns_black_ppt.pdf', 
+      filename: 'ns_black_bg.png', 
       description: "", 
       style: "bg-slate-900 text-white" 
   },
   { 
       id: 'ns_white', 
       name: 'NS White', 
-      filename: 'ns_white_ppt.pdf', 
+      filename: 'ns_white_bg.png', 
       description: "", 
       style: "bg-white border-b border-gray-200 text-slate-800"
   },
