@@ -526,7 +526,8 @@ export const generateInfographicImage = async (
                 ? `- **REQUIRED**: Place [File Input ${logoIndex}] in the top corner (matching the Template's logo position).
                    - **PADDING**: The logo must be inset from the edge. Add meaningful padding.
                    - **INTEGRITY**: The logo must be **entirely visible** and **uncropped**.
-                   - **LAYER**: The logo sits on top of all other graphics.` 
+                   - **LAYER**: The logo sits on top of all other graphics.
+                   - **CONSTRAINT**: The logo MUST be EXACTLY the same as [File Input ${logoIndex}], do not change the logo in any way.`
                 : `- Render the brand name "${assets.name}" as a text logo in the top corner.`
            }
 
@@ -594,11 +595,11 @@ export const generateInfographicImage = async (
         }
     };
 
-    // Execute all 5 requests in parallel
+    // Execute all 3 requests in parallel
     const promises = Array.from({ length: numberOfInstances }, (_, i) => generateInstance(i));
     const results = await Promise.all(promises);
     
-    // Filter out failed requests
+    // Filter out failed requests   
     const successfulImages = results.filter((img): img is string => img !== null);
 
     if (successfulImages.length === 0) {

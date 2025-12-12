@@ -130,7 +130,7 @@ export const InfographicResult: React.FC<InfographicResultProps> = ({
           <p className="text-slate-400 text-center max-w-sm leading-relaxed">
             {t.designingDesc}
           </p>
-          <p className="text-slate-500 text-xs mt-4">Generating 5 parallel variations...</p>
+          <p className="text-slate-500 text-xs mt-4">Generating 3 parallel variations...</p>
         </div>
       </div>
     );
