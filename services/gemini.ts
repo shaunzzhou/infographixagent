@@ -18,8 +18,8 @@ const BRAND_ASSETS: Record<string, {
     'ns_white': {
         name: 'Northstar', 
         logoPath: '/template/ns_white_logo.png',
-        templatePath: '/template/ns_black_bg.png',
-        brandDNA: "Clean corporate minimalism. White backgrounds, subtle light-gray shadows, sharp navy blue text, generous whitespace. Professional, trustworthy, clinical."
+        templatePath: '/template/ns_white_bg.png',
+        brandDNA: "Clean corporate minimalism. White backgrounds, subtle light-gray shadows, sharp black text, generous whitespace. Professional, trustworthy, clinical."
     },
     'aa': { 
         name: 'Antalpha',
