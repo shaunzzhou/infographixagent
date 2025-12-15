@@ -546,6 +546,9 @@ export const generateInfographicImage = async (
         4. **Content Integrity**:
            - Use only the provided text.
            - No extra slogans, timestamps, or AI disclaimers.
+
+        5. **Instructional Notes**:
+           - Any coordinates, placement labels (e.g., "X:10-90, Y:20-30"), or measurement callouts you see are layout instructions only. Never render them as visible text or overlays in the final artwork.
     `;
 
     if (planText) {
