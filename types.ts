@@ -15,8 +15,8 @@ export interface DocumentInputData {
   content: string; // The text content OR the base64 string
   mimeType?: string; // e.g. 'application/pdf'
   fileName?: string;
-  templateData?: string; // Base64 of the style template
-  templateMimeType?: string;
+  // Optional manual override of mode (if the user picks one explicitly)
+  preferredMode?: AnalysisMode;
   templateFileName?: string; // Add template file name for display purposes
   userContext?: string; // Specific instructions from user
   

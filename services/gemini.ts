@@ -123,72 +123,92 @@ const sanitizeResult = (result: AnalysisResult): AnalysisResult => {
 };
 
 /**
- * INTELLIGENT ROUTER: Determines the user's intent
- * Now uses Strict Classification Categories
+ * INTENT ROUTER: heuristics-first, LLM fallback (no confidence values)
  */
-const determineIntent = async (input: DocumentInputData): Promise<AnalysisMode> => {
+const determineIntent = async (input: DocumentInputData, language: Language = 'en'): Promise<AnalysisMode> => {
     console.log("[Router] Evaluating intent...");
-    
-    // 1. Files are Explicit
+
+    // User override always wins
+    if (input.preferredMode) {
+        console.log(`[Router] User override: ${input.preferredMode}`);
+        return input.preferredMode;
+    }
+
+    const content = input.content || "";
+    const userContext = input.userContext || "";
+    const combined = `${content}\n${userContext}`.trim();
+    const length = combined.length;
+
+    const isQuestionLike = (text: string) => {
+        const lower = text.toLowerCase();
+        return /[\?？]/.test(text) || /^(who|what|when|where|why|how|which|can|should)\b/.test(lower);
+    };
+
+    const isCreativeLike = (text: string) => {
+        const wordCount = text.split(/\s+/).filter(Boolean).length;
+        const creativeKeywords = /(poster|banner|greeting|happy|welcome|celebrat|launch|招募|招聘|欢迎|庆祝|海报|宣传|贺|新年|春节|祝)/i;
+        // Short headline-ish text with creative cue words
+        return wordCount > 0 && wordCount <= 25 && creativeKeywords.test(text);
+    };
+
+    // 1) File inputs: default to summary unless strong context
     if (input.type === 'file') {
-        const mode = (input.userContext && input.userContext.trim().length > 0)
-            ? 'TARGETED_ANALYSIS'
-            : 'AUTO_SUMMARY';
-        console.log(`[Router] File detected. Mode: ${mode}`);
+        const mode = userContext.trim().length > 0 ? 'TARGETED_ANALYSIS' : 'AUTO_SUMMARY';
+        console.log(`[Router] File input → ${mode}`);
         return mode;
     }
 
-    // 2. Text Input Ambiguity
-    // If context differs significantly from content, it's targeted
-    if (input.content && input.userContext && input.content !== input.userContext) {
+    // 2) Context differs from content → targeted
+    if (content && userContext && content !== userContext) {
+        console.log("[Router] Context differs from content → TARGETED_ANALYSIS");
         return 'TARGETED_ANALYSIS';
     }
 
-    // 3. Length Heuristic: Very long text is likely a document to summarize
-    if (input.content.length > 2000) {
-         return 'AUTO_SUMMARY';
+    // 3) Clear question → targeted
+    if (isQuestionLike(combined)) {
+        console.log("[Router] Question-like input → TARGETED_ANALYSIS");
+        return 'TARGETED_ANALYSIS';
     }
 
-    // 4. Robust Text Classification via LLM
+    // 4) Short creative-ish → creative
+    if (isCreativeLike(combined)) {
+        console.log("[Router] Creative-like short text → CREATIVE_GENERATION");
+        return 'CREATIVE_GENERATION';
+    }
+
+    // 5) Ambiguous → LLM classification to the 3 modes
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             config: {
                 responseMimeType: "application/json",
-                temperature: 0.0, // Zero temperature for maximum determinism
+                temperature: 0.0,
                 responseSchema: {
                     type: Type.OBJECT,
                     properties: {
-                        inputType: { 
-                            type: Type.STRING, 
-                            // GREETING_SLOGAN: "Happy New Year", "Merry Christmas", "Welcome Team"
-                            // VISUAL_REQUEST: "Make a poster of a cat", "Draw a chart"
-                            // DOCUMENT_CONTENT: "Q3 financial results showing 30% growth..."
-                            // SPECIFIC_QUESTION: "What is the revenue?"
-                            enum: ["GREETING_SLOGAN", "VISUAL_REQUEST", "DOCUMENT_CONTENT", "SPECIFIC_QUESTION", "UNKNOWN"],
-                            description: "Classify the user input text." 
+                        mode: { 
+                            type: Type.STRING,
+                            enum: ["CREATIVE_GENERATION", "TARGETED_ANALYSIS", "AUTO_SUMMARY"]
                         }
                     }
                 }
             },
             contents: [{
                 role: "user",
-                parts: [{ text: `Classify this text strictly. If it is a holiday greeting, short slogan, or visual description, mark it as GREETING_SLOGAN or VISUAL_REQUEST.\n\nInput Text: "${input.content.substring(0, 500)}"` }]
+                parts: [{
+                    text: `Classify this input into exactly one mode: CREATIVE_GENERATION (poster-like short slogans/visual asks), TARGETED_ANALYSIS (questions with specific focus), or AUTO_SUMMARY (longer documents to summarize). Reply ONLY with JSON.\nInput:\n"${combined.substring(0, 800)}"`
+                }]
             }]
         });
-        
         const result = safeJsonParse(response.text);
-        console.log(`[Router] AI Classification: ${result.inputType}`);
-
-        if (['GREETING_SLOGAN', 'VISUAL_REQUEST'].includes(result.inputType)) {
-            return 'CREATIVE_GENERATION';
+        if (result.mode === 'CREATIVE_GENERATION' || result.mode === 'TARGETED_ANALYSIS' || result.mode === 'AUTO_SUMMARY') {
+            console.log(`[Router] LLM classified → ${result.mode}`);
+            return result.mode;
         }
-        if (result.inputType === 'SPECIFIC_QUESTION') {
-            return 'TARGETED_ANALYSIS';
-        }
+        console.warn("[Router] LLM returned unexpected mode, falling back to AUTO_SUMMARY");
     } catch (e) {
-        console.warn("[Router] Classification failed, defaulting to SUMMARY.", e);
+        console.warn("[Router] LLM classification failed, defaulting to AUTO_SUMMARY.", e);
     }
 
     return 'AUTO_SUMMARY';
@@ -202,7 +222,7 @@ export const analyzeDocument = async (input: DocumentInputData, language: Langua
     const modelId = "gemini-2.5-flash"; // Fast, structured model
 
     // 1. Determine Intent
-    const mode = await determineIntent(input);
+    const mode = await determineIntent(input, language);
 
     // 2. Prepare System Instruction
     let systemInstruction = "";
@@ -372,23 +392,19 @@ CONTENT PROVIDED BY USER:
     }
 - Custom Visual Motif: ${data.customVisualPrompt?.trim() || 'None'}
 
-PLAN FORMAT (TEXT ONLY, ABSOLUTELY NO JSON):
-1. CANVAS OVERVIEW — describe grid units, safe margins (use percent values, e.g., "Top margin 8%").
-2. BRAND & BACKGROUND — explain how to reuse [File Input ...] template layers and apply brand colors/texture.
-3. LOGO & HEADER — exact placement (coordinates 0-100 for X/Y anchors), size guidance, hierarchy of text.
-4. BODY SECTIONS — for each section/key point, specify:
-   - placement rectangle using normalized percentages (Left %, Top %, Width %, Height %),
-   - whether it is text, chart placeholder, or visual,
-   - how to incorporate the user-provided text verbatim.
-5. VISUAL SCENE — instructions for illustrations/photo treatments referencing ${data.customVisualPrompt ? 'the custom motif AND' : ''} the brand DNA.
-6. FOOTER & BACKGROUND DETAILS — call out any footer text, icons, or supporting metrics.
-7. EXECUTION NOTES — bullet list of do/don’t (e.g., "Do not add new copy", "Respect safe zones").
+PLAN FORMAT (PLAIN TEXT ONLY, NO JSON, NO MARKDOWN):
+1. CANVAS OVERVIEW — describe grid and safe margins qualitatively (e.g., “comfortable padding top/left/right/bottom”). Do NOT provide numeric coordinates/percentages in the plan or on artwork.
+2. BRAND & BACKGROUND — Template = base layout/background. Use [File Input ...] template strictly for base layer; do NOT replace it. Custom motif (e.g., red festive) only as overlays/light/glow on top. Brand DNA geometry = subtle overlay/accents only.
+3. LOGO & HEADER — describe logo in top corner with generous padding; title/subtitle beneath with clear hierarchy. No exact %/coords; give relative placement (top-left, centered under logo, etc.). Logo stays as provided, not redrawn.
+4. BODY SECTIONS — for each key point (if any), give a relative placement region (e.g., left column, lower half), type (text/chart/visual), and use provided text verbatim (no translate/rewrites). If keyPoints are empty (poster mode), explicitly state no extra sections/bullets.
+5. VISUAL SCENE — instructions for illustrations/photo treatments referencing ${data.customVisualPrompt ? 'the custom motif AND ' : ''}the brand DNA.
+6. FOOTER & BACKGROUND DETAILS — mention any footer/metrics if provided; otherwise note clear footer margin.
+7. EXECUTION NOTES — concise do/don’t (plain text sentences; avoid Markdown bullets). Remind: no new copy; respect safe zones; do NOT render coordinates/labels on artwork.
 
 IMPORTANT:
 - Refer to attachments exactly as [File Input N] when describing template/logo usage.
-- Use normalized percentages (0-100) for any placement values (example: "Main title block spans X:10-90, Y:12-25").
-- Never invent extra marketing copy; always reuse provided text.
-- Return polished prose, not bullet gibberish.
+- Never invent or translate/rewrites; reuse provided text verbatim (keep language as provided).
+- Return polished prose (plain text), not Markdown.
 `;
 
     let assetIndex = 1;
@@ -406,6 +422,17 @@ IMPORTANT:
     }
 
     parts.push({ text: prompt });
+
+    console.log("[Planner] Request payload:", {
+        brand: assets.name,
+        templateFile: templateConfig.fileName,
+        hasTemplateInline: !!templateRef,
+        hasLogoInline: !!logo,
+        aspectRatio: visualConfig.aspectRatio,
+        title: data.title,
+        mode: data.mode,
+        promptPreview: prompt.slice(0, 500) + (prompt.length > 500 ? "..." : "")
+    });
 
     const response = await ai.models.generateContent({
         model: modelId,
@@ -476,7 +503,7 @@ export const generateInfographicImage = async (
     if (templateRef) {
         parts.push({ inlineData: { mimeType: templateRef.mimeType, data: templateRef.data } });
         templateIndex = assetIndex;
-        prompt += `\n[File Input ${assetIndex}]: **TEMPLATE WIREFRAME**. \nUsage: Use this strictly for Layout, Margins, and Font Hierarchy. This defines the "Container".\n`;
+        prompt += `\n[File Input ${assetIndex}]: **TEMPLATE WIREFRAME (BASE BACKGROUND)**. \nUsage: Must be the base layer for layout/margins/texture. Do NOT replace or ignore it.\n`;
         assetIndex++;
     }
 
@@ -523,11 +550,10 @@ export const generateInfographicImage = async (
 
         1. **Logo Integration**:
            ${logoIndex > 0 
-                ? `- **REQUIRED**: Place [File Input ${logoIndex}] in the top corner (matching the Template's logo position).
-                   - **PADDING**: The logo must be inset from the edge. Add meaningful padding.
-                   - **INTEGRITY**: The logo must be **entirely visible** and **uncropped**.
-                   - **LAYER**: The logo sits on top of all other graphics.
-                   - **CONSTRAINT**: The logo MUST be EXACTLY the same as [File Input ${logoIndex}], do not change the logo in any way.`
+                ? `- **REQUIRED**: Use [File Input ${logoIndex}] as-is in the top corner (matching the Template's logo position).
+                   - **PADDING**: Inset from edges with generous padding.
+                   - **INTEGRITY**: Entirely visible, uncropped, no edits/recolors beyond a subtle glow if needed.
+                   - **LAYER**: On top of all other graphics.`
                 : `- Render the brand name "${assets.name}" as a text logo in the top corner.`
            }
 
@@ -539,12 +565,12 @@ export const generateInfographicImage = async (
 
         3. **Layout Compliance**:
            ${planText
-                ? `- Follow the approved plan exactly as described below. Do not rearrange or improvise new sections.`
-                : `- Use the provided template wireframe for structure. Maintain generous margins and align sections symmetrically.`
+                ? `- Follow the approved plan below for structure.`
+                : `- Use the provided template wireframe as the base. Maintain generous margins and align sections symmetrically.`
            }
 
         4. **Content Integrity**:
-           - Use only the provided text.
+           - Use only the provided text. Do NOT translate or rewrite it.
            - No extra slogans, timestamps, or AI disclaimers.
 
         5. **Instructional Notes**:
@@ -559,7 +585,7 @@ export const generateInfographicImage = async (
         --------------------------------------------------
         `;
     } else {
-        prompt += `
+    prompt += `
         NOTE: No explicit layout plan provided. Adhere closely to ${templateReferenceLabel} for spacing and hierarchy.
         `;
     }
@@ -567,6 +593,17 @@ export const generateInfographicImage = async (
     parts.push({ text: prompt });
 
     console.log("[Artist] Generating 3 parallel instances...");
+    console.log("[Artist] Payload meta:", {
+        brand: assets.name,
+        templateFile: templateConfig.fileName,
+        hasTemplateInline: !!templateRef,
+        hasLogoInline: !!logo,
+        aspectRatio: visualConfig.aspectRatio,
+        hasPlanText: !!planText,
+        planTextPreview: planText ? `${planText.slice(0, 120)}...` : null,
+        title: data.title,
+        mode: data.mode
+    });
 
     // 4. Parallel Generation
     const numberOfInstances = 3;
@@ -581,13 +618,13 @@ export const generateInfographicImage = async (
                 config: {
                     imageConfig: {
                         aspectRatio: visualConfig.aspectRatio || "3:4", 
-                        imageSize: "4K"
                     }
                 }
             });
 
             for (const part of response.candidates?.[0]?.content?.parts || []) {
                 if (part.inlineData) {
+                    console.log(`[Artist] Instance ${index + 1} returned image mime=${part.inlineData.mimeType} size=${part.inlineData.data.length}`);
                     return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
                 }
             }

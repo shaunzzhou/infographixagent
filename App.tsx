@@ -1,12 +1,13 @@
 
 import React, { useState } from 'react';
 import { AlertCircle, PieChart, Upload } from 'lucide-react';
-import { AppState, AnalysisResult, DocumentInputData, AVAILABLE_TEMPLATES } from './types';
+import { AppState, AnalysisResult, DocumentInputData, AVAILABLE_TEMPLATES, AnalysisMode } from './types';
 import { analyzeDocument, generateInfographicImage, generateInfographicPlan } from './services/gemini';
 import { DocumentInput } from './components/DocumentInput';
 import { AnalysisView } from './components/AnalysisView';
 import { InfographicResult } from './components/InfographicResult';
 import { useTranslation } from './contexts/LanguageContext';
+import { SelectedFileState } from './components/ChatInputBar';
 
 const App: React.FC = () => {
   const { language, setLanguage, t } = useTranslation();
@@ -14,13 +15,60 @@ const App: React.FC = () => {
   const [analysisData, setAnalysisData] = useState<AnalysisResult | null>(null);
   const [imageUrls, setImageUrls] = useState<string[]>([]); // Changed to array
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [planText, setPlanText] = useState<string | null>(null);
 
   // Lifted UI State
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(AVAILABLE_TEMPLATES[0].id);
   const [aspectRatio, setAspectRatio] = useState<string>('3:4');
+  // Shared chat input state (used on home + review)
+  const [chatText, setChatText] = useState<string>('');
+  const [chatFile, setChatFile] = useState<SelectedFileState | null>(null);
+  const [chatMode, setChatMode] = useState<'AUTO' | AnalysisMode>('AUTO');
   
   // Store original config
   const [pendingInputConfig, setPendingInputConfig] = useState<DocumentInputData | null>(null);
+
+  const buildPayloadFromChat = (): DocumentInputData => {
+    const currentTemplate = AVAILABLE_TEMPLATES.find(t => t.id === selectedTemplateId) || AVAILABLE_TEMPLATES[0];
+    const payload: DocumentInputData = {
+      type: 'text',
+      content: '',
+      templateFileName: currentTemplate.filename
+    };
+
+    if (chatMode !== 'AUTO') {
+      payload.preferredMode = chatMode;
+    }
+
+    if (chatFile) {
+      if (chatFile.base64) {
+        payload.type = 'file';
+        payload.content = chatFile.base64;
+        payload.mimeType = chatFile.type;
+        payload.fileName = chatFile.name;
+      } else if (chatFile.extractedText) {
+        payload.type = 'text';
+        payload.content = chatFile.extractedText;
+        payload.fileName = chatFile.name;
+      }
+      // If user also typed something, treat it as context
+      if (chatText.trim().length > 0) {
+        payload.userContext = chatText.trim();
+      }
+    } else if (chatText.trim().length > 0) {
+      payload.type = 'text';
+      payload.content = chatText.trim();
+    }
+
+    return payload;
+  };
+
+  const handleAnalyzeFromChat = async () => {
+    const payload = buildPayloadFromChat();
+    // Guard: need content
+    if (!payload.content) return;
+    await handleAnalyze(payload);
+  };
 
   // STEP 1: Analyze Document -> Review State
   const handleAnalyze = async (input: DocumentInputData) => {
@@ -29,6 +77,7 @@ const App: React.FC = () => {
     setErrorMsg(null);
     setAnalysisData(null);
     setImageUrls([]);
+    setPlanText(null);
     setPendingInputConfig(input);
 
     // If payload has a template (from auto-detect or default), sync our state
@@ -57,6 +106,7 @@ const App: React.FC = () => {
     setAppState(AppState.GENERATING_IMAGE);
     setErrorMsg(null);
     setImageUrls([]); // Clear previous results
+    setPlanText(null);
     
     try {
       // Find the currently selected template details
@@ -77,6 +127,7 @@ const App: React.FC = () => {
       let planText: string | null = null;
       try {
           planText = await generateInfographicPlan(analysisData, finalTemplateConfig, visualConfig, language);
+          setPlanText(planText);
           console.log("[App] Infographic Plan:\n", planText);
       } catch (planErr) {
           console.warn("[App] Plan generation failed. Continuing without plan.", planErr);
@@ -103,7 +154,18 @@ const App: React.FC = () => {
   const renderContent = () => {
       switch (appState) {
           case AppState.IDLE:
-              return <DocumentInput onAnalyze={handleAnalyze} isProcessing={false} />;
+              return (
+                <DocumentInput 
+                  text={chatText}
+                  file={chatFile}
+                  modePreference={chatMode}
+                  isProcessing={appState === AppState.ANALYZING}
+                  onTextChange={setChatText}
+                  onFileChange={setChatFile}
+                  onModeChange={setChatMode}
+                  onSubmit={handleAnalyzeFromChat}
+                />
+              );
           
           case AppState.ANALYZING:
               // Show Analysis View in loading state
@@ -118,6 +180,14 @@ const App: React.FC = () => {
                     onTemplateChange={setSelectedTemplateId}
                     aspectRatio={aspectRatio}
                     onAspectRatioChange={setAspectRatio}
+                    chatText={chatText}
+                    chatFile={chatFile}
+                    chatModePreference={chatMode}
+                    onChatTextChange={setChatText}
+                    onChatFileChange={setChatFile}
+                    onChatModeChange={setChatMode}
+                    onChatSubmit={handleAnalyzeFromChat}
+                    isChatProcessing={true}
                   />
                );
 
@@ -134,6 +204,14 @@ const App: React.FC = () => {
                     onTemplateChange={setSelectedTemplateId}
                     aspectRatio={aspectRatio}
                     onAspectRatioChange={setAspectRatio}
+                    chatText={chatText}
+                    chatFile={chatFile}
+                    chatModePreference={chatMode}
+                    onChatTextChange={setChatText}
+                    onChatFileChange={setChatFile}
+                    onChatModeChange={setChatMode}
+                    onChatSubmit={handleAnalyzeFromChat}
+                    isChatProcessing={appState === AppState.ANALYZING}
                   />
               );
 
@@ -166,6 +244,7 @@ const App: React.FC = () => {
                             onAspectRatioChange={setAspectRatio}
                             selectedTemplateId={selectedTemplateId}
                             onTemplateChange={setSelectedTemplateId}
+                            planText={planText || undefined}
                         />
                       </div>
                   </div>
@@ -191,6 +270,7 @@ const App: React.FC = () => {
   return (
     // Changed bg-blue-ish to bg-slate-50 (Zinc 50) and dark:bg-slate-950 (Zinc 950)
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-gray-900 dark:text-slate-100 font-sans selection:bg-slate-200 dark:selection:bg-slate-700 flex flex-col transition-colors duration-300">
+      <style>{`@keyframes fadeSlideIn { from { opacity: 0; transform: translateY(12px);} to { opacity: 1; transform: translateY(0);} }`}</style>
       
       {/* Global Header */}
       <header className="bg-white/80 dark:bg-slate-950/80 backdrop-blur-md border-b border-gray-200 dark:border-slate-800 sticky top-0 z-50 flex-none transition-colors duration-300">
@@ -229,8 +309,10 @@ const App: React.FC = () => {
       </header>
 
       {/* Main Content Area */}
-      <main className={`w-full flex-1 ${appState === AppState.COMPLETE ? 'overflow-hidden' : 'pb-10'}`}>
-        {renderContent()}
+      <main className={`w-full flex-1 ${appState === AppState.COMPLETE ? 'overflow-hidden' : 'pb-10'} overflow-hidden`}>
+        <div style={{ animation: 'fadeSlideIn 0.35s ease' }}>
+          {renderContent()}
+        </div>
       </main>
 
     </div>

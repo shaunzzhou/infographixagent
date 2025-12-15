@@ -1,7 +1,8 @@
 import React, { useRef, useEffect } from 'react';
-import { AnalysisResult, KeyPoint, AVAILABLE_TEMPLATES } from '../types';
+import { AnalysisResult, KeyPoint, AVAILABLE_TEMPLATES, AnalysisMode } from '../types';
 import { Sparkles, ArrowRight, CheckCircle2, LayoutTemplate, Plus, Trash2, ChevronLeft, ScanSearch, PenTool, FileText, Palette, Monitor, Smartphone } from 'lucide-react';
 import { useTranslation } from '../contexts/LanguageContext';
+import { ChatInputBar, SelectedFileState } from './ChatInputBar';
 
 interface AnalysisViewProps {
   data: AnalysisResult;
@@ -14,6 +15,15 @@ interface AnalysisViewProps {
   onTemplateChange: (id: string) => void;
   aspectRatio: string;
   onAspectRatioChange: (ratio: string) => void;
+  // Chat input (review-time) props
+  chatText: string;
+  chatFile: SelectedFileState | null;
+  chatModePreference: 'AUTO' | AnalysisMode;
+  onChatTextChange: (v: string) => void;
+  onChatFileChange: (f: SelectedFileState | null) => void;
+  onChatModeChange: (m: 'AUTO' | AnalysisMode) => void;
+  onChatSubmit: () => void;
+  isChatProcessing: boolean;
 }
 
 /**
@@ -63,7 +73,15 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
   selectedTemplateId,
   onTemplateChange,
   aspectRatio,
-  onAspectRatioChange
+  onAspectRatioChange,
+  chatText,
+  chatFile,
+  chatModePreference,
+  onChatTextChange,
+  onChatFileChange,
+  onChatModeChange,
+  onChatSubmit,
+  isChatProcessing
 }) => {
   const { t } = useTranslation();
   
@@ -131,7 +149,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
   }
 
   return (
-    <div className="w-full max-w-5xl mx-auto px-4 pb-20 transition-colors">
+    <div className="relative w-full max-w-5xl mx-auto px-4 h-[calc(100vh-140px)] transition-colors overflow-hidden flex flex-col">
       
       {/* Back Button */}
       <div className="pt-6">
@@ -144,7 +162,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
       </div>
 
       {/* HEADER & ACTION */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 mt-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 mt-4">
         <div>
             <div className="flex items-center gap-3 mb-1">
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{t.reviewTitle}</h1>
@@ -165,8 +183,11 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
         </button>
       </div>
 
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-y-auto pr-1 pb-4 space-y-8">
+
       {/* SECTION 1: STYLE SELECTOR & CUSTOM PROMPT */}
-      <div className="mb-8 space-y-6">
+      <div className="space-y-6">
         {/* Templates */}
         <div>
             <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide flex items-center gap-2 mb-4">
@@ -187,7 +208,14 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
                             `}
                         >
                             {/* Visual Preview Area */}
-                            <div className={`h-32 w-full ${template.style} relative p-4 flex flex-col justify-end`}>
+                            <div
+                                className={`h-32 w-full ${template.style} relative p-4 flex flex-col justify-end overflow-hidden`}
+                                style={{
+                                  backgroundImage: `linear-gradient(180deg, rgba(15,23,42,0.4), rgba(15,23,42,0.6)), url(/template/${template.filename})`,
+                                  backgroundSize: 'cover',
+                                  backgroundPosition: 'center'
+                                }}
+                            >
                                 {/* Abstract Mock Content using currentColor */}
                                 <div className="w-8 h-8 rounded-full bg-current opacity-20 mb-auto backdrop-blur-sm"></div>
                                 <div className="w-3/4 h-3 bg-current opacity-20 rounded-sm mb-2 backdrop-blur-sm"></div>
@@ -359,6 +387,25 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
          </button>
 
       </div>
-    </div>
+
+      
+      </div>
+{/* Footer chat input for re-run/refine */}
+      <div className="flex-none pt-2 pb-4">
+          <ChatInputBar
+            text={chatText}
+            onTextChange={onChatTextChange}
+            file={chatFile}
+            onFileChange={onChatFileChange}
+            modePreference={chatModePreference}
+            onModeChange={onChatModeChange}
+            isProcessing={isChatProcessing}
+            onSubmit={onChatSubmit}
+            placeholder="Refine text, add instructions, or drop a new file to re-run analysis..."
+            hint="Edits here will re-run analysis and refresh the plan."
+            ctaLabel="Re-run Analysis"
+          />
+        </div>
+      </div>
   );
 };
