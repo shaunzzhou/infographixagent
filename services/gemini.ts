@@ -924,31 +924,34 @@ ${data.customVisualPrompt ? `THEME ELEMENTS TO BLEND WITH TEMPLATE: ${data.custo
 
 CRITICAL RULES - FUSION DESIGN:
 
-STEP 1: IDENTIFY AND PRESERVE TEMPLATE'S KEY ELEMENTS (DO NOT CHANGE THESE):
-Study ${templateBgRef} carefully and PRESERVE these elements EXACTLY:
-- Main gradient direction and colors (e.g., diagonal blue-to-teal gradient)
-- Geometric shapes and their positions (e.g., angular shapes, curves, lines)
-- Background texture or pattern style
-- Logo placement area (usually top-left or top-right)
-- Overall color scheme and mood
+STEP 1: IDENTIFY TEMPLATE'S KEY VISUAL ELEMENTS (PRESERVE 100%):
+Study ${templateBgRef} and identify:
+- Geometric shapes (curves, lines, angular shapes) → KEEP EXACTLY AS-IS, DO NOT COVER
+- Gradients and color flows → KEEP EXACTLY AS-IS
+- Logo area → KEEP CLEAR
 
-STEP 2: IDENTIFY SAFE ZONES FOR THEME ELEMENTS:
-Theme/decorative elements can ONLY go in areas that don't obstruct template's key visuals:
-- Corners (where no key geometric shapes exist)
-- Empty/plain background areas
-- Borders and edges
+STEP 2: IDENTIFY EMPTY/BLANK AREAS (THIS IS WHERE THEME ELEMENTS GO):
+Look for:
+- White or solid color background areas → PUT THEME ELEMENTS HERE
+- Plain areas with no geometric shapes → PUT THEME ELEMENTS HERE
+- Areas between/around the geometric shapes → PUT THEME ELEMENTS HERE
 
-STEP 3: APPLY FUSION (60:40 RATIO):
-1. Template 60% (dominant) - All key elements from Step 1 must remain intact
-2. Theme 40% (supporting) - Add decorative elements ONLY in safe zones from Step 2
+STEP 3: PLACE THEME ELEMENTS IN EMPTY AREAS ONLY:
+- Theme elements (trees, decorations, etc.) go IN THE BLANK/EMPTY AREAS
+- Theme elements should NOT overlap with template's geometric shapes
+- Theme elements should look like they're BEHIND or BESIDE the template shapes, not ON TOP
+- The template's curves/shapes should remain UNOBSTRUCTED and fully visible
+
+STEP 4: APPLY FUSION (60:40 RATIO):
+1. Template's geometric shapes = 100% preserved, untouched
+2. Empty areas = filled with theme elements (max 40% of total design)
 3. Copy ${logoRef} exactly with its original colors
-4. Theme colors should COMPLEMENT template colors, not replace them
-5. TYPOGRAPHY - Match the template's font style exactly
+4. TYPOGRAPHY - Match the template's font style exactly
 
-WHAT NOT TO DO:
-- Do NOT cover or modify template's geometric shapes
-- Do NOT change the gradient direction or main colors
-- Do NOT place theme elements over key template visuals
+CRITICAL - WHAT NOT TO DO:
+- Do NOT place theme elements ON TOP OF template's curves/shapes
+- Do NOT let theme elements overlap or cover geometric shapes
+- The blue curves/shapes should be COMPLETELY VISIBLE, theme elements fill the gaps around them
 7. TEXT IS CRITICAL:
    - ONLY display the exact text from CONTENT section above
    - NEVER show placeholder text like "TITLE", "TEXT TEXT TEXT", "Lorem ipsum"
