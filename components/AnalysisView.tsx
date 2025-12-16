@@ -211,7 +211,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
                             <div
                                 className={`h-32 w-full ${template.style} relative p-4 flex flex-col justify-end overflow-hidden`}
                                 style={{
-                                  backgroundImage: `linear-gradient(180deg, rgba(15,23,42,0.4), rgba(15,23,42,0.6)), url(/template/${template.filename})`,
+                                  backgroundImage: `linear-gradient(180deg, rgba(15,23,42,0.4), rgba(15,23,42,0.6)), url(/template-new/${template.filename})`,
                                   backgroundSize: 'cover',
                                   backgroundPosition: 'center'
                                 }}
@@ -404,6 +404,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
             placeholder="Refine text, add instructions, or drop a new file to re-run analysis..."
             hint="Edits here will re-run analysis and refresh the plan."
             ctaLabel="Re-run Analysis"
+            compact
           />
         </div>
       </div>

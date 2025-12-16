@@ -33,7 +33,8 @@ const App: React.FC = () => {
     const payload: DocumentInputData = {
       type: 'text',
       content: '',
-      templateFileName: currentTemplate.filename
+      templateFileName: currentTemplate.filename,
+      templateId: currentTemplate.id
     };
 
     if (chatMode !== 'AUTO') {
@@ -81,7 +82,10 @@ const App: React.FC = () => {
     setPendingInputConfig(input);
 
     // If payload has a template (from auto-detect or default), sync our state
-    if (input.templateFileName) {
+    if (input.templateId) {
+        const matchById = AVAILABLE_TEMPLATES.find(t => t.id === input.templateId);
+        if (matchById) setSelectedTemplateId(matchById.id);
+    } else if (input.templateFileName) {
         const match = AVAILABLE_TEMPLATES.find(t => t.filename === input.templateFileName);
         if (match) setSelectedTemplateId(match.id);
     }
@@ -116,7 +120,8 @@ const App: React.FC = () => {
       const finalTemplateConfig = {
           data: '', // We don't have the data here, the service loads it by filename usually
           mimeType: 'application/pdf',
-          fileName: currentTemplate.filename
+          fileName: currentTemplate.filename,
+          brandId: currentTemplate.id
       };
 
       const visualConfig = {

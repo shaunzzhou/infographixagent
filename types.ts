@@ -17,7 +17,8 @@ export interface DocumentInputData {
   fileName?: string;
   // Optional manual override of mode (if the user picks one explicitly)
   preferredMode?: AnalysisMode;
-  templateFileName?: string; // Add template file name for display purposes
+  templateFileName?: string; // Legacy matching field
+  templateId?: string; // Preferred template identifier
   userContext?: string; // Specific instructions from user
   
   // Visual Configuration
@@ -52,22 +53,29 @@ export const AVAILABLE_TEMPLATES = [
   { 
       id: 'ns_black', 
       name: 'NS Black', 
-      filename: 'ns_black_bg.png', 
-      description: "", 
+      filename: 'ns_black/ns_black_bg.png', 
+      description: "Northstar dark tech aesthetic with glowing blue geometry.", 
       style: "bg-slate-900 text-white" 
   },
   { 
       id: 'ns_white', 
       name: 'NS White', 
-      filename: 'ns_white_bg.png', 
-      description: "", 
+      filename: 'ns_white/ns_white_bg.png', 
+      description: "Northstar clean white corporate layout with light gray shapes.", 
       style: "bg-white border-b border-gray-200 text-slate-800"
   },
   { 
       id: 'aa', 
       name: 'AA', 
-      filename: 'aa_bg.png', 
-      description: "", 
+      filename: 'aa/Background/aa_bg_colour.png', 
+      description: "Antalpha gradient finance theme with indigo and gold energy.", 
       style: "bg-gradient-to-br from-blue-900 to-indigo-900 text-white"
+  },
+  {
+      id: 'es',
+      name: 'ElevateSphere',
+      filename: 'es/es_template/es_template_p0.png',
+      description: "ElevateSphere luminous gradient system with data dashboards.",
+      style: "bg-gradient-to-br from-slate-900 to-blue-900 text-white"
   }
 ];

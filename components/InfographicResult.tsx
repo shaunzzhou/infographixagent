@@ -320,7 +320,7 @@ export const InfographicResult: React.FC<InfographicResultProps> = ({
                                     >
                                         <div
                                           className="w-12 h-8 rounded-md border border-gray-200 dark:border-slate-700 overflow-hidden bg-cover bg-center"
-                                          style={{ backgroundImage: `url(/template/${template.filename})` }}
+                                          style={{ backgroundImage: `url(/template-new/${template.filename})` }}
                                         ></div>
                                         <span>{template.name}</span>
                                     </button>
