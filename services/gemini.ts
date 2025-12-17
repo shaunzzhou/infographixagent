@@ -222,10 +222,20 @@ const resolveAssetsForPlan = (
     library: TemplateLibraryData | null,
     planText?: string
 ): TemplateAssetEntry[] => {
-    if (!library) return [];
-    if (!planText) return library.assets;
+    if (!library) {
+        console.log('[Assets] No library provided');
+        return [];
+    }
+    if (!planText) {
+        console.log('[Assets] No planText provided - returning ALL assets');
+        return library.assets;
+    }
     const requested = extractSelectedAssetPaths(planText);
-    if (!requested.length) return library.assets;
+    console.log('[Assets] Extracted from SELECTED_ASSETS:', requested);
+    if (!requested.length) {
+        console.log('[Assets] No assets extracted from plan - returning ALL assets');
+        return library.assets;
+    }
     const normalized = requested.map(p => p.toLowerCase());
     const matches = library.assets.filter(asset => {
         const rel = asset.relativePath.toLowerCase();
@@ -266,7 +276,18 @@ const resolveAssetsForPlan = (
         }
     }
     
-    if (matches.length >= MIN_SELECTED_ASSETS) return matches;
+    console.log(`[Assets] Matched ${matches.length} assets:`, 
+        matches.map(m => m.relativePath));
+    
+    // If we successfully matched ANY assets from the plan, use them
+    // Don't fallback to ALL assets - respect the planner's selection
+    if (matches.length > 0) {
+        console.log('[Assets] Using matched assets from plan');
+        return matches;
+    }
+    
+    // Only fallback to all assets if we matched nothing at all
+    console.log('[Assets] No matches found - returning ALL assets as fallback');
     return library.assets;
 };
 
@@ -591,26 +612,128 @@ export const analyzeDocument = async (input: DocumentInputData, language: Langua
 };
 
 /**
- * Helper to select key visual assets for planner preview
- * Returns a curated set: some templates, logo, and examples (if available)
+ * Template Selection Agent: Uses LLM to select the most relevant templates
+ * based on user's mode, text content, and template descriptions
  */
-const selectPlannerPreviewAssets = (assets: TemplateAssetEntry[], maxTemplates: number = 4): TemplateAssetEntry[] => {
-    const result: TemplateAssetEntry[] = [];
-    
-    // 1. Get template backgrounds (select a variety - first, middle, last)
-    const templates = assets.filter(a => 
-        a.relativePath.includes('_template/') || a.relativePath.includes('_bg')
+const selectRelevantTemplatesWithLLM = async (
+    mode: string,
+    textContent: string,
+    promptTemplateContent: string,
+    availableAssets: TemplateAssetEntry[]
+): Promise<string[]> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const modelId = "gemini-2.5-flash";
+
+    // Extract only template assets (not logos, examples, backgrounds)
+    const templates = availableAssets.filter(a => 
+        a.relativePath.includes('_template/') && !a.relativePath.includes('_bg')
     );
-    if (templates.length > 0) {
-        // Pick strategically: first, one from middle, and last for variety
-        const indices = [0];
-        if (templates.length > 2) indices.push(Math.floor(templates.length / 2));
-        if (templates.length > 1) indices.push(templates.length - 1);
-        indices.slice(0, maxTemplates).forEach(i => {
-            if (templates[i] && !result.some(r => r.relativePath === templates[i].relativePath)) {
-                result.push(templates[i]);
+
+    if (templates.length === 0) {
+        console.log('[Template Selection] No templates found, returning empty');
+        return [];
+    }
+
+    // Build a catalog of templates with their "Recommended use" descriptions
+    const templateCatalog = templates.map((t, idx) => {
+        return `${idx + 1}. ${t.relativePath}\n   Description: ${t.description}`;
+    }).join('\n\n');
+
+    const prompt = `You are a template selection expert. Your job is to select the 2-3 MOST RELEVANT templates for the user's content.
+
+USER'S CONTENT MODE: ${mode}
+USER'S TEXT CONTENT: "${textContent}"
+
+AVAILABLE TEMPLATES:
+${templateCatalog}
+
+INSTRUCTIONS:
+1. Read the user's content and mode carefully
+2. Look at each template's description and "Recommended use"
+3. Select 2-3 templates that are MOST SUITABLE for this content
+4. Consider:
+   - If mode is "CREATIVE" or "POSTER" → prefer templates with bold visuals, gradients, dynamic layouts
+   - If mode is "FOCUSED_ANALYSIS" → prefer templates with data visualization, charts, clean text layouts
+   - Match the content type (title page? data analysis? feature showcase? process diagram?)
+
+OUTPUT FORMAT (plain text, one filename per line, NO extra text):
+template_folder/template_name.png
+template_folder/template_name2.png
+template_folder/template_name3.png
+
+EXAMPLE OUTPUT:
+aa_template/aa_template_p0.png
+aa_template/aa_template_p9.png
+
+Now output 2-3 template filenames (ONLY filenames, one per line, no numbering, no extra text):`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: modelId,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: {
+                thinkingConfig: { thinkingBudget: 0 },
+                temperature: 0.3,
             }
         });
+
+        const resultText = response.text?.trim() || '';
+        console.log('[Template Selection] LLM raw response:', resultText);
+
+        // Parse the response - extract filenames
+        const lines = resultText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const selectedFilenames: string[] = [];
+
+        for (const line of lines) {
+            // Look for template filenames in the line
+            const template = templates.find(t => line.includes(t.relativePath));
+            if (template && !selectedFilenames.includes(template.relativePath)) {
+                selectedFilenames.push(template.relativePath);
+            }
+        }
+
+        console.log('[Template Selection] Selected templates:', selectedFilenames);
+
+        // Ensure we have at least 1 and at most 3
+        if (selectedFilenames.length === 0) {
+            console.log('[Template Selection] No valid templates selected, falling back to first template');
+            return [templates[0].relativePath];
+        }
+
+        return selectedFilenames.slice(0, 3);
+
+    } catch (error) {
+        console.error('[Template Selection] Error:', error);
+        // Fallback: return first template
+        return [templates[0].relativePath];
+    }
+};
+
+/**
+ * Helper to select key visual assets for planner preview
+ * Returns a curated set: specific templates (from LLM selection), logo, and examples
+ */
+const selectPlannerPreviewAssets = (assets: TemplateAssetEntry[], selectedTemplateFilenames: string[]): TemplateAssetEntry[] => {
+    const result: TemplateAssetEntry[] = [];
+    
+    // 1. Get only the LLM-selected templates
+    if (selectedTemplateFilenames.length > 0) {
+        selectedTemplateFilenames.forEach(filename => {
+            const template = assets.find(a => a.relativePath === filename);
+            if (template && !result.some(r => r.relativePath === template.relativePath)) {
+                result.push(template);
+            }
+        });
+    }
+    
+    // Fallback: if no templates were found, use first available template
+    if (result.length === 0) {
+        const templates = assets.filter(a => 
+            a.relativePath.includes('_template/') || a.relativePath.includes('_bg')
+        );
+        if (templates.length > 0) {
+            result.push(templates[0]);
+        }
     }
     
     // 2. Get logo (prefer color version)
@@ -656,8 +779,22 @@ export const generateInfographicPlan = async (
     const [widthRatio, heightRatio] = ratio.split(':').map(n => parseFloat(n)) as [number, number];
     const orientation = widthRatio >= heightRatio ? 'Landscape' : 'Portrait';
 
-    // Select key assets to show the planner (templates, logo, examples)
-    const previewAssets = selectPlannerPreviewAssets(availableAssets);
+    // 🆕 STEP 1: Template Selection Agent - Let LLM choose relevant templates
+    const userText = data.title || data.summary || '';
+    const userMode = data.mode || 'AUTO';
+    const promptTemplateText = templateLibrary?.rawText || '';
+    
+    console.log(`[Template Selection] Calling LLM to select templates for mode="${userMode}", text="${userText.slice(0, 100)}..."`);
+    const selectedTemplateFilenames = await selectRelevantTemplatesWithLLM(
+        userMode,
+        userText,
+        promptTemplateText,
+        availableAssets
+    );
+    console.log(`[Template Selection] LLM selected ${selectedTemplateFilenames.length} templates:`, selectedTemplateFilenames);
+
+    // STEP 2: Select key assets to show the planner (LLM-selected templates + logo + examples)
+    const previewAssets = selectPlannerPreviewAssets(availableAssets, selectedTemplateFilenames);
     const previewAttachments = await buildAttachmentParts(templateLibrary, previewAssets);
     
     console.log(`[Planner] Attaching ${previewAttachments.length} preview images:`, 
@@ -717,31 +854,52 @@ ${assetCatalogText}
 
 PLAN FORMAT (PLAIN TEXT ONLY, NO JSON, NO MARKDOWN):
 1. CANVAS OVERVIEW — describe grid and safe margins qualitatively (e.g., "comfortable padding top/left/right/bottom"). Do NOT provide numeric coordinates/percentages.
-2. BRAND & BACKGROUND — You MUST select ONE specific template file as the base layer. State the exact filename. THE TEMPLATE'S COLORS AND VISUAL STYLE MUST REMAIN VISIBLE AND DOMINANT. Custom motifs are small decorative accents ONLY.
+2. BRAND & BACKGROUND — You MUST select ONE specific template file as the base layer. State the exact filename. THE TEMPLATE'S COLORS AND VISUAL STYLE MUST REMAIN VISIBLE AND DOMINANT.
 3. LOGO & HEADER — You MUST use the logo asset. State the exact filename. Logo goes in top corner with generous padding.
 4. BODY SECTIONS — for each key point (if any), give a relative placement region. Use provided text verbatim. If poster mode, state no extra sections.
-5. VISUAL SCENE — CRITICAL: Decorative elements (dragons, lanterns, patterns) should be SMALL ACCENTS in corners or borders. They must NOT cover or replace the template background. The template's corporate style is the foundation.
-6. FOOTER & BACKGROUND DETAILS — mention any footer/metrics if provided; otherwise note clear footer margin.
-7. EXECUTION NOTES — concise do/don't. Remind: no new copy; respect safe zones; PRESERVE template appearance.
+5. DIRECTIONAL PLACEMENT — YOU MUST explicitly state ONE direction for theme elements. Format: "Theme elements direction: LEFT" (or TOP/BOTTOM/RIGHT). Look at the attached template preview to choose wisely.
+6. VISUAL SCENE — Describe the theme elements and how they occupy the chosen direction. State: "The [theme description] will occupy the [LEFT/RIGHT/TOP/BOTTOM] side, with a smooth gradient transition to the template's area." The template's key visual features (curves, gradients) must remain visible and untouched.
+7. FOOTER & BACKGROUND DETAILS — mention any footer/metrics if provided; otherwise note clear footer margin.
+8. EXECUTION NOTES — concise do/don't. Remind: no new copy; respect safe zones; PRESERVE template appearance; smooth transition between areas.
 
-⚠️ CRITICAL RULES FOR BRAND + THEME FUSION:
-- FUSION RATIO: Template 60% : Theme 40% - The template's visual style should be MORE prominent
-- The template provides the FOUNDATION (colors, gradients, layout structure). It must remain recognizable.
-- Custom visual motifs (dragons, patterns, lanterns, etc.) should BLEND HARMONIOUSLY with the template:
-  * FUSION, not separation - the template colors and theme colors should flow together naturally
-  * The template's gradients/colors can transition into or mix with theme colors
-  * Template elements should occupy roughly 60% of the visual space
-  * Theme/decorative elements should occupy roughly 40% of the visual space
-  * Example: Template's blue gradient dominates center/left, red/gold elements flow in from edges
-- TYPOGRAPHY must match the template's style:
-  * Use the SAME font style as shown in the template (modern sans-serif, script, etc.)
-  * Match the template's text weight, spacing, and alignment patterns
-  * Font colors should harmonize with both template and theme colors
-- The final result should look like a COHESIVE design where corporate identity LEADS and theme elements COMPLEMENT
-- Do NOT let theme elements overpower the template - template is the star, theme is supporting
+
+⚠️ LAYOUT STRATEGY - CRITICAL RULES:
+
+STEP 1: STUDY THE ATTACHED TEMPLATE PREVIEW
+- Look at the attached template images carefully
+- Identify where the template's KEY VISUAL FEATURES are (curves, shapes, gradients, patterns)
+- Example: If you see a blue curve on the RIGHT side, that's a key feature
+
+STEP 2: CHOOSE ONE DIRECTION FOR THEME ELEMENTS
+- Choose ONE direction: TOP, BOTTOM, LEFT, or RIGHT
+- Preferably choose the direction WITHOUT template's key features
+- But if theme colors match template, they can share space with smooth blending
+
+STEP 3: OUTPUT THE DIRECTION IN SECTION 5
+- In your "5. DIRECTIONAL PLACEMENT" section, write EXACTLY:
+  "Theme elements direction: [LEFT/RIGHT/TOP/BOTTOM]"
+- This is MANDATORY - do not skip this line
+
+STEP 4: DESCRIBE THE VISUAL SCENE IN SECTION 6
+- Describe how theme elements occupy the chosen direction
+- Mention smooth gradient transition to template area
+- Emphasize that template's key features remain visible
+
+EXAMPLE OUTPUT:
+5. DIRECTIONAL PLACEMENT — Theme elements direction: LEFT
+6. VISUAL SCENE — The festive winter scene with Christmas tree and warm lights will occupy the LEFT side of the canvas. The RIGHT side preserves the template's distinctive blue infinity curve. A smooth color gradient in the middle creates a seamless transition between the festive left and the corporate right, maintaining a cohesive, professional appearance.
+
+GOAL: Clear directional separation with smooth gradient transition
 - You MUST reference exact filenames from the AVAILABLE BRAND ASSETS list above.
 - Use provided text verbatim (no translation/rewrites).
 - Templates may contain placeholder text. IGNORE these - they will be replaced.
+
+⚠️ CRITICAL REMINDERS BEFORE YOU WRITE YOUR PLAN:
+1. You MUST include "5. DIRECTIONAL PLACEMENT — Theme elements direction: [LEFT/RIGHT/TOP/BOTTOM]" in your plan
+2. Study the attached template preview images to see where key features are located
+3. The template's key visual features (curves, shapes, gradients) MUST remain visible in final output
+4. Do NOT say "corners" or "small accents" - choose ONE full direction for theme elements
+5. Mention "smooth gradient transition" between template and theme areas in section 6
 
 AT THE END OF YOUR PLAN, ADD THIS SECTION EXACTLY:
 SELECTED_ASSETS:
@@ -811,6 +969,7 @@ export const generateInfographicImage = async (
     const assets = BRAND_ASSETS[assetKey];
     
     console.log(`[Artist] Using assets for: ${assets.name}`);
+    console.log(`[Artist] Plan text provided:`, planText ? `Yes (${planText.length} chars)` : 'No');
 
     const templateLibrary = await fetchTemplateLibrary(assetKey);
     const selectedAssetMetas = resolveAssetsForPlan(templateLibrary, planText);
@@ -824,6 +983,9 @@ export const generateInfographicImage = async (
         ...selectedAssetMetas,
         ...exampleAssets.filter(e => !selectedAssetMetas.some(s => s.relativePath === e.relativePath))
     ];
+    
+    console.log(`[Artist] Final assets to attach (${assetsWithExamples.length} total):`, 
+        assetsWithExamples.map(a => a.relativePath));
     
     const attachmentEntries = await buildAttachmentParts(templateLibrary, assetsWithExamples);
     
@@ -898,6 +1060,17 @@ Study these examples to understand the brand's visual style, text placement, and
 
     let prompt = `Create ONE SINGLE poster/infographic for ${assets.name}.
 
+📎 FILES ATTACHED TO THIS REQUEST (YOU MUST USE THESE):
+${allFileRefs}
+
+🚨 MANDATORY: YOU MUST USE THE ATTACHED IMAGE FILES
+- The files listed above are NOT optional references
+- They are REQUIRED elements that MUST appear in your output
+- ${templateBgRef} = You MUST use this as your base layer (look at this file and copy its visual style)
+- ${logoRef} = You MUST place this logo EXACTLY as it appears in the file
+- DO NOT redesign, recreate, or imagine these elements - USE THE ACTUAL FILES
+- LOOK at the files first, then design based on what you SEE in them
+
 CRITICAL: Generate ONE complete design that fills the ENTIRE canvas.
 - Do NOT split the image into multiple sections/panels
 - Do NOT create a collage or grid of multiple designs
@@ -909,57 +1082,161 @@ REFERENCE IMAGES:
 - ${logoRef} = LOGO (copy exactly with original colors)
 ${exampleSection}
 
-CONTENT (USE EXACTLY THIS TEXT - NOTHING ELSE):
-- Title: "${data.title}"
-- Subtitle: "${data.summary}"
+⚠️ CRITICAL WARNING: Text rendering quality is THE MOST IMPORTANT aspect of this task.
+- Write every word COMPLETELY and CORRECTLY
+- Do NOT break words (e.g., "Christ-mas" or "Christ Christmas")
+- Do NOT truncate words (e.g., "pea" instead of "peace")
+- If you make text errors, the output will be REJECTED
+
+═══════════════════════════════════════════════════════════════
+📝 CONTENT - COPY THIS TEXT EXACTLY, WORD-FOR-WORD:
+═══════════════════════════════════════════════════════════════
+
+Title (copy exactly): "${data.title}"
+Subtitle (copy exactly): "${data.summary}"
 ${data.keyPoints.length > 0 ? data.keyPoints.map((kp, i) => `- ${kp.title}: ${kp.description}`).join('\n') : ''}
 
-TEXT RULES - VERY IMPORTANT:
-- ONLY use the text provided above. Do NOT add any other text.
-- Do NOT copy placeholder text from the template (e.g., "TITLE", "TEXT TEXT TEXT", "Lorem ipsum", etc.)
-- Do NOT generate generic labels like "TITLE TITLE TITLE" or "HEADING"
-- If the template shows placeholder text, REPLACE it with the actual content above
+⚠️ READ AGAIN - THE TITLE IS: "${data.title}"
+⚠️ READ AGAIN - THE SUBTITLE IS: "${data.summary}"
 
-${data.customVisualPrompt ? `THEME ELEMENTS TO BLEND WITH TEMPLATE: ${data.customVisualPrompt}` : ''}
+Do NOT change, add, or repeat any words. Write it EXACTLY as shown above.
 
-CRITICAL RULES - FUSION DESIGN:
+═══════════════════════════════════════════════════════════════
 
-STEP 1: IDENTIFY TEMPLATE'S KEY VISUAL ELEMENTS (PRESERVE 100%):
-Study ${templateBgRef} and identify:
-- Geometric shapes (curves, lines, angular shapes) → KEEP EXACTLY AS-IS, DO NOT COVER
-- Gradients and color flows → KEEP EXACTLY AS-IS
-- Logo area → KEEP CLEAR
+🚨 TEXT RENDERING - EXTREMELY CRITICAL:
 
-STEP 2: IDENTIFY EMPTY/BLANK AREAS (THIS IS WHERE THEME ELEMENTS GO):
-Look for:
-- White or solid color background areas → PUT THEME ELEMENTS HERE
-- Plain areas with no geometric shapes → PUT THEME ELEMENTS HERE
-- Areas between/around the geometric shapes → PUT THEME ELEMENTS HERE
+RULE 1: EXACT TEXT ONLY - DO NOT CHANGE ANYTHING
+- ONLY use the text provided in CONTENT section above
+- Write each text line COMPLETELY and EXACTLY as shown
+- ❌ DO NOT add extra words
+- ❌ DO NOT repeat words (e.g., if title is "Merry Christmas 2025", do NOT write "Merry Merry Christmas")
+- ❌ DO NOT remove words (e.g., if title is "Merry Christmas 2025", do NOT write just "Merry 2025")
+- ❌ DO NOT change words (e.g., if title is "Christmas", do NOT write "Xmas" or "X-mas")
+- ❌ DO NOT copy placeholder text from template (e.g., "TITLE", "TEXT TEXT TEXT", "Lorem ipsum")
+- ❌ DO NOT generate generic labels like "TITLE TITLE TITLE" or "HEADING"
 
-STEP 3: PLACE THEME ELEMENTS IN EMPTY AREAS ONLY:
-- Theme elements (trees, decorations, etc.) go IN THE BLANK/EMPTY AREAS
-- Theme elements should NOT overlap with template's geometric shapes
-- Theme elements should look like they're BEHIND or BESIDE the template shapes, not ON TOP
-- The template's curves/shapes should remain UNOBSTRUCTED and fully visible
+RULE 2: DO NOT BREAK OR TRUNCATE WORDS
+- ❌ DO NOT split words across lines (e.g., "Christ-mas" or "Christ Christmas")
+- ❌ DO NOT truncate words (e.g., "pea" instead of "peace", "sea" instead of "season")
+- ❌ DO NOT add extra spaces in the middle of words (e.g., "Christ mas" instead of "Christmas")
+- ✅ Keep each word COMPLETE and INTACT
+- ✅ If a line is too long, reduce font size slightly to fit the complete text
+- ✅ Use proper line breaks only between words, not in the middle of words
 
-STEP 4: APPLY FUSION (60:40 RATIO):
-1. Template's geometric shapes = 100% preserved, untouched
-2. Empty areas = filled with theme elements (max 40% of total design)
-3. Copy ${logoRef} exactly with its original colors
-4. TYPOGRAPHY - Match the template's font style exactly
+RULE 3: SPELL CORRECTLY
+- Write "Christmas" as one complete word, not "Christ mas" or "Christ Christmas"
+- Write "peace" completely, not "pea" or "pea ce"
+- Write "season" completely, not "sea" or "sea son"
+- Write "holiday" completely, not "holi day"
 
-CRITICAL - WHAT NOT TO DO:
-- Do NOT place theme elements ON TOP OF template's curves/shapes
-- Do NOT let theme elements overlap or cover geometric shapes
-- The blue curves/shapes should be COMPLETELY VISIBLE, theme elements fill the gaps around them
-7. TEXT IS CRITICAL:
+RULE 4: TEXT PLACEMENT
+- Ensure there is enough space for the complete text
+- Do NOT let text overlap with decorative elements
+- Do NOT let text get cut off at the edge of the canvas
+- If text is too long for one line, break it at natural phrase boundaries (not in middle of words)
+
+EXAMPLE OF CORRECT TEXT:
+✅ Title: "Merry Christmas 2025" (exactly as specified, no extra words)
+✅ Subtitle: "Wishing you joy and peace this holiday season!" (exactly as specified)
+
+EXAMPLE OF WRONG TEXT (COMMON MISTAKES TO AVOID):
+❌ "Merry Merry Christmas 2025" (word repeated - WRONG!)
+❌ "Merry Christ Christmas 2025" (word split incorrectly - WRONG!)
+❌ "Merry Christmas" (missing "2025" - WRONG!)
+❌ "Wishing you joy and pea peace this holiday sea" (words truncated - WRONG!)
+
+FOR THIS SPECIFIC REQUEST:
+The title should be: "${data.title}"
+NOT: "Merry Merry Christmas", NOT: "Merry Christ Christmas", NOT: "Christmas 2025"
+Write it EXACTLY as: "${data.title}"
+
+${data.customVisualPrompt ? `THEME VISUAL ELEMENTS: ${data.customVisualPrompt}` : ''}
+
+CRITICAL DESIGN APPROACH:
+
+STEP 1: USE TEMPLATE AS THE BASE LAYER
+   - Start with ${templateBgRef} as your complete background
+   - Keep ALL of its visual elements visible AND THEIR ORIGINAL COLORS
+   - ❌ DO NOT change the template's colors (e.g., if template has blue curves, keep them blue)
+   - ❌ DO NOT recolor template elements to match theme colors
+   - ❌ DO NOT change gradients or color schemes from the template
+   - ✅ The template's visual elements (curves, shapes, gradients) must remain EXACTLY as they appear in ${templateBgRef}
+   - The template fills the entire canvas as the foundation
+
+STEP 2: FOLLOW THE LAYOUT PLAN'S DIRECTIONAL GUIDANCE
+   - The layout plan below will specify which direction to place theme elements
+   - Follow that direction exactly as specified in the plan
+
+STEP 3: CREATE SMOOTH TRANSITION BETWEEN AREAS
+   - Template area keeps its ORIGINAL colors (do NOT change)
+   - Theme area has your custom theme colors
+   - Middle transition zone: GRADUAL BLUR/FADE where template colors meet theme colors
+   - Do NOT create a hard line or sharp boundary
+   - Use gradient blending where the two areas meet
+   - The transition should feel natural and seamless
+   - IMPORTANT: Template's key visual elements (in template area) must maintain their original colors, NOT blended into theme colors
+
+EXAMPLE:
+- If plan says theme on LEFT: Left side = theme elements (red/gold Christmas colors), Right side = template features (original blue curves/gradients)
+- Middle area = smooth gradient transition (blur/fade) connecting both sides
+- Result: Seamless fusion where left is festive (red/gold), right is corporate (blue), middle is smooth blend
+- CRITICAL: The template's blue curves on the right side MUST stay blue, NOT changed to red/gold
+
+REQUIREMENTS:
+
+0. 🎨 TEMPLATE COLORS (CRITICAL - MUST PRESERVE):
+   - Look at ${templateBgRef} and observe ALL its colors carefully
+   - The template's visual elements MUST keep their ORIGINAL COLORS
+   - ❌ DO NOT change the template's curves/shapes/gradients to different colors
+   - ❌ DO NOT recolor template elements to match your theme (e.g., if template has blue curves, keep them BLUE even if theme is red/gold)
+   - ❌ DO NOT make template elements the same color as theme elements
+   - ✅ Template area = original template colors (untouched)
+   - ✅ Theme area = your custom theme colors
+   - ✅ Middle transition = smooth gradient blend between the two
+   - EXAMPLE: If template has a blue infinity curve, that curve MUST remain blue in final output
+
+1. 🎨 LOGO PLACEMENT (CRITICAL - MUST FOLLOW):
+   - STEP 1: Look at ${logoRef} file carefully - what colors do you see?
+   - STEP 2: Copy the logo EXACTLY as shown in the file (same colors, same design)
+   - STEP 3: Place it in the top-left corner with generous padding
+   - ❌ DO NOT change the logo's colors for any reason
+   - ❌ DO NOT make the logo white/black unless it's already white/black in the file
+   - ❌ DO NOT redesign or recreate the logo from text description
+   - ❌ DO NOT assume the logo is white just because it's on a dark background
+   - ✅ The logo should be clearly visible and not covered by other elements
+   - ✅ If the logo has blue/green/red colors in the file, KEEP those colors
+
+2. 📝 TYPOGRAPHY (CRITICAL - MUST FOLLOW):
+   - STEP 1: Look at ${templateBgRef} carefully - does it have any text?
+   - STEP 2: If you see text in the template, observe:
+     • Font family (is it sans-serif like Arial/Helvetica, or serif?)
+     • Font weight (is the title bold/heavy, or light/thin?)
+     • Text alignment (is text left-aligned, centered, or right-aligned?)
+     • Text size (how big is the title vs. body text?)
+     • Text color (what color is the text - white, black, blue?)
+   - STEP 3: Apply the SAME styling to your content text
+   - ✅ If template has bold white titles → use bold white titles
+   - ✅ If template has left-aligned text → use left-aligned text
+   - ✅ If template has large headline + small subtitle → follow same hierarchy
+   - ❌ DO NOT use a completely different font style from the template
+
+3. Final design = Template features in one direction + Theme elements in opposite direction
+
+4. TEXT IS CRITICAL:
    - ONLY display the exact text from CONTENT section above
    - NEVER show placeholder text like "TITLE", "TEXT TEXT TEXT", "Lorem ipsum"
    - NEVER generate generic labels like "TITLE TITLE TITLE" or "HEADING"
    - If you see placeholder text in template, REPLACE it with actual content
-8. Final result = ONE cohesive design where corporate template and festive theme are seamlessly merged
-9. OUTPUT MUST BE A SINGLE COMPLETE POSTER - no splits, no collages, no multiple designs in one image
-${exampleRefs.length > 0 ? `10. Study the STYLE EXAMPLES to match the same level of professional quality.` : ''}
+
+5. Final result = ONE cohesive design where corporate template and festive theme are seamlessly merged
+
+6. OUTPUT MUST BE A SINGLE COMPLETE POSTER - no splits, no collages, no multiple designs in one image
+${exampleRefs.length > 0 ? `
+7. STYLE REFERENCE:
+   - Study the ${exampleRefs.join(', ')} files
+   - Match the same level of professional quality
+   - Observe how text is styled in these examples
+   - Observe how the logo is placed in these examples` : ''}
 `;
 
     if (planText) {
@@ -968,17 +1245,28 @@ ${exampleRefs.length > 0 ? `10. Study the STYLE EXAMPLES to match the same level
 LAYOUT GUIDANCE (follow for text placement):
 ${sanitizedPlan}
 
-FINAL REMINDER - FUSION DESIGN (60:40 RATIO):
-- Template 60% (dominant) : Theme 40% (supporting)
-- Template colors/gradients should BLEND with theme colors
-- Template visual style should be MORE visible than theme decorations
-- Result = Corporate design enhanced with festive touches
-- NOT: Festive design with corporate logo`;
+FINAL CHECKLIST (verify before generating):
+✓ I have looked at ${templateBgRef} and will use it as the COMPLETE background foundation
+✓ I will PRESERVE the template's ORIGINAL COLORS (curves, shapes, gradients stay as they are in ${templateBgRef})
+✓ I will NOT recolor template elements to match theme colors (e.g., blue curves stay blue, not changed to red/gold)
+✓ I have looked at ${logoRef} and will copy it EXACTLY with its ORIGINAL COLORS (not changed to white/black unless it already is)
+✓ I will follow the layout plan's directional guidance for theme placement
+✓ I will create a SMOOTH GRADIENT TRANSITION between template and theme areas (blur/fade, not hard line)
+✓ I will match the text styling (font, weight, alignment) from ${templateBgRef}
+✓ THE TITLE WILL BE EXACTLY: "${data.title}" (not "Merry Merry Christmas", not "Christ Christmas")
+✓ THE SUBTITLE WILL BE EXACTLY: "${data.summary}" (no word truncations like "pea" or "sea")
+✓ I will NOT repeat words, NOT truncate words, NOT split words
+✓ All words will be spelled correctly and completely (no word splits or truncations)
+✓ The result will be ONE seamless design, not two separate sections
+✓ The logo will be clearly visible in the top corner with original colors preserved`;
     }
 
     parts.push({ text: prompt });
 
-    console.log("[Artist] Generating 3 parallel instances...");
+    // 4. Parallel Generation - generate 3 instances for selection
+    const numberOfInstances = 3;
+
+    console.log(`[Artist] Generating ${numberOfInstances} parallel instances for better text accuracy...`);
     console.log("[Artist] Payload meta:", {
         brand: assets.name,
         templateFile: templateConfig.fileName,
@@ -993,9 +1281,6 @@ FINAL REMINDER - FUSION DESIGN (60:40 RATIO):
         title: data.title,
         mode: data.mode
     });
-
-    // 4. Parallel Generation - generate more for better selection
-    const numberOfInstances = 3;
     
     // Helper function for a single generation request
     const generateInstance = async (index: number): Promise<string | null> => {
@@ -1005,7 +1290,7 @@ FINAL REMINDER - FUSION DESIGN (60:40 RATIO):
                 model,
                 contents: [{ role: 'user', parts }],
                 config: {
-                    temperature: 0.3,  // Lower temperature for more consistent/stable results
+                    temperature: 0.15,  // Extremely low temperature for accurate text rendering
                     imageConfig: {
                         aspectRatio: visualConfig.aspectRatio || "3:4", 
                     }
